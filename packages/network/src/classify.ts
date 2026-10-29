@@ -689,9 +689,15 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
   for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
+  // A day the member names that no offered option covers ("Friday works" when the probe
+  // offered Thursday, Saturday, Sunday): a yes aimed at that day is a counter-offer, never a
+  // pick of every option. A negated mention ("Friday doesn't work") is not a counter.
+  let counterDay = false;
   for (const [re, dayName] of DAY_WORDS) {
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
     if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+    else for (const m of t.matchAll(new RegExp(re.source, "g")))
+      if (!negatedAt(t, m.index!, m[0].length)) { counterDay = true; break; }
   }
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
@@ -715,6 +721,9 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
+  // A yes to a day that was never offered ("Friday works"): yes, but none of those times.
+  // It must not fall through to the plain-yes rule and book an offered time the member did not name.
+  if (c.answer === "yes" && counterDay && !picked.length) return { answer: "yes", keys: [], why: "counter" };
   if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
   if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
